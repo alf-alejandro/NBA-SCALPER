@@ -1,0 +1,871 @@
+"""
+Dashboard web para NBA Edge Alpha Bot v3.0
+Sirve el frontend y expone endpoints API.
+"""
+
+import os
+import json
+from datetime import datetime
+from flask import Flask, jsonify, send_file, abort
+import main as bot
+
+app = Flask(__name__)
+PORT = int(os.environ.get("PORT", "8080"))
+
+
+# ── API Endpoints ──────────────────────────────────────────────────────────────
+
+@app.route("/api/data")
+def api_data():
+    return jsonify(bot.get_dashboard_data())
+
+
+@app.route("/api/scan", methods=["POST"])
+def api_scan():
+    """Fuerza un scan manual."""
+    bot.trigger_manual_scan()
+    return jsonify({"ok": True, "message": "Scan manual programado"})
+
+
+@app.route("/api/positions")
+def api_positions():
+    return jsonify({"positions": bot.load_positions()})
+
+
+@app.route("/api/scan_log")
+def api_scan_log():
+    return jsonify({"log": bot.load_scan_log()})
+
+
+# ── Frontend ───────────────────────────────────────────────────────────────────
+
+DASHBOARD_HTML = r"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NBA EDGE ALPHA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:      #050a0f;
+    --surface: #0b1520;
+    --border:  #1a2f45;
+    --accent:  #00e5ff;
+    --green:   #00ff88;
+    --red:     #ff3b5c;
+    --gold:    #ffd700;
+    --dim:     #4a6b80;
+    --text:    #c8dde8;
+    --mono:    'Share Tech Mono', monospace;
+    --sans:    'Barlow Condensed', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    overflow-x: hidden;
+    min-height: 100vh;
+  }
+
+  /* Background grid */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,229,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,229,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  #app { position: relative; z-index: 1; }
+
+  /* ── Header ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(11,21,32,0.95);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    backdrop-filter: blur(10px);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+
+  .logo-icon {
+    width: 40px;
+    height: 40px;
+    border: 2px solid var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    animation: pulse-border 3s infinite;
+  }
+
+  @keyframes pulse-border {
+    0%, 100% { border-color: var(--accent); box-shadow: 0 0 8px rgba(0,229,255,0.3); }
+    50%       { border-color: var(--green); box-shadow: 0 0 16px rgba(0,255,136,0.4); }
+  }
+
+  .logo-text { line-height: 1; }
+  .logo-text .title {
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: 4px;
+    color: var(--accent);
+    text-transform: uppercase;
+  }
+  .logo-text .sub {
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+  }
+
+  .timestamp {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  .last-scan {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+  }
+
+  #scan-btn {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 2px;
+    padding: 8px 20px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-transform: uppercase;
+  }
+
+  #scan-btn:hover {
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  #scan-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+
+  /* ── Main layout ── */
+  main {
+    padding: 24px 32px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  /* ── Stats row ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stat-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--accent);
+  }
+
+  .stat-card.green::after { background: var(--green); }
+  .stat-card.red::after   { background: var(--red); }
+  .stat-card.gold::after  { background: var(--gold); }
+
+  .stat-label {
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 10px;
+  }
+
+  .stat-value {
+    font-family: var(--mono);
+    font-size: 32px;
+    color: var(--accent);
+    line-height: 1;
+  }
+
+  .stat-card.green .stat-value { color: var(--green); }
+  .stat-card.red   .stat-value { color: var(--red); }
+  .stat-card.gold  .stat-value { color: var(--gold); }
+
+  /* ── Section headers ── */
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+    margin-top: 8px;
+  }
+
+  .section-title {
+    font-size: 13px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--dim);
+    font-weight: 600;
+  }
+
+  .section-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .section-count {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--dim);
+  }
+
+  /* ── Two-column layout ── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 28px;
+  }
+
+  /* ── Position cards ── */
+  .positions-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .pos-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 16px 20px;
+    transition: border-color 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .pos-card.open    { border-left: 3px solid var(--accent); }
+  .pos-card.closed-tp { border-left: 3px solid var(--green); }
+  .pos-card.closed-sl { border-left: 3px solid var(--red); }
+
+  .pos-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+
+  .pos-match {
+    font-size: 11px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .pos-team {
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+
+  .pos-badge {
+    font-size: 10px;
+    letter-spacing: 2px;
+    padding: 3px 8px;
+    border: 1px solid;
+    font-weight: 600;
+  }
+
+  .pos-badge.open   { color: var(--accent); border-color: var(--accent); }
+  .pos-badge.tp     { color: var(--green);  border-color: var(--green); }
+  .pos-badge.sl     { color: var(--red);    border-color: var(--red); }
+
+  .pos-prices {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 10px;
+  }
+
+  .pos-price-item { line-height: 1.3; }
+
+  .pos-price-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    color: var(--dim);
+    text-transform: uppercase;
+  }
+
+  .pos-price-val {
+    font-family: var(--mono);
+    font-size: 16px;
+  }
+
+  .pos-price-val.entry  { color: var(--text); }
+  .pos-price-val.current { color: var(--accent); }
+  .pos-price-val.tp-val  { color: var(--green); }
+  .pos-price-val.sl-val  { color: var(--red); }
+
+  .pos-pnl {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: bold;
+  }
+  .pos-pnl.pos { color: var(--green); }
+  .pos-pnl.neg { color: var(--red); }
+  .pos-pnl.neu { color: var(--dim); }
+
+  /* Price bar */
+  .price-bar-wrapper {
+    margin-top: 10px;
+  }
+
+  .price-bar-track {
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    position: relative;
+    margin-bottom: 4px;
+  }
+
+  .price-bar-sl  {
+    position: absolute;
+    width: 2px;
+    height: 10px;
+    top: -3px;
+    background: var(--red);
+    border-radius: 1px;
+  }
+
+  .price-bar-tp  {
+    position: absolute;
+    width: 2px;
+    height: 10px;
+    top: -3px;
+    background: var(--green);
+    border-radius: 1px;
+  }
+
+  .price-bar-entry {
+    position: absolute;
+    width: 2px;
+    height: 10px;
+    top: -3px;
+    background: var(--dim);
+    border-radius: 1px;
+  }
+
+  .price-bar-current {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    top: -2px;
+    background: var(--accent);
+    border-radius: 50%;
+    transform: translateX(-50%);
+    transition: left 0.5s;
+  }
+
+  /* ── Opportunities table ── */
+  .ops-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .ops-table th {
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: var(--dim);
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 600;
+  }
+
+  .ops-table td {
+    padding: 10px 12px;
+    font-size: 14px;
+    border-bottom: 1px solid rgba(26,47,69,0.5);
+    vertical-align: middle;
+  }
+
+  .ops-table tr:hover td {
+    background: rgba(0,229,255,0.03);
+  }
+
+  .nea-buy  { color: var(--green);  font-family: var(--mono); font-weight: bold; }
+  .nea-avoid { color: var(--red);   font-family: var(--mono); }
+
+  .action-buy  { color: var(--green);  font-size: 11px; letter-spacing: 2px; font-weight: 600; }
+  .action-avoid { color: var(--red);   font-size: 11px; letter-spacing: 2px; }
+
+  .price-mono { font-family: var(--mono); font-size: 13px; }
+
+  /* ── Config panel ── */
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+
+  .config-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+  }
+
+  .config-label {
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 6px;
+  }
+
+  .config-value {
+    font-family: var(--mono);
+    font-size: 20px;
+    color: var(--accent);
+  }
+
+  /* ── Scrollable containers ── */
+  .scroll-box {
+    max-height: 460px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--dim);
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  /* ── Notifications ── */
+  #notif {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 12px 20px;
+    font-size: 13px;
+    letter-spacing: 1px;
+    opacity: 0;
+    transform: translateY(10px);
+    transition: all 0.3s;
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  #notif.show {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 1100px) {
+    .stats-row   { grid-template-columns: repeat(3, 1fr); }
+    .two-col     { grid-template-columns: 1fr; }
+    .config-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 700px) {
+    header   { padding: 14px 16px; }
+    main     { padding: 16px; }
+    .stats-row { grid-template-columns: repeat(2, 1fr); }
+    .pos-prices { flex-wrap: wrap; gap: 12px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🏀</div>
+      <div class="logo-text">
+        <div class="title">NBA Edge Alpha</div>
+        <div class="sub">Polymarket · Price Inefficiency Bot</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div>
+        <div class="timestamp" id="clock">--:--:-- ET</div>
+        <div class="last-scan" id="last-scan-label">Last scan: --</div>
+      </div>
+      <button id="scan-btn" onclick="triggerScan()">⚡ SCAN NOW</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Posiciones Abiertas</div>
+        <div class="stat-value" id="stat-open">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Total Cerradas</div>
+        <div class="stat-value" id="stat-closed">0</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-label">Take Profits</div>
+        <div class="stat-value" id="stat-tp">0</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-label">Stop Losses</div>
+        <div class="stat-value" id="stat-sl">0</div>
+      </div>
+      <div class="stat-card gold">
+        <div class="stat-label">Win Rate</div>
+        <div class="stat-value" id="stat-wr">0%</div>
+      </div>
+    </div>
+
+    <!-- Config -->
+    <div class="section-header">
+      <span class="section-title">Configuración Activa</span>
+      <div class="section-line"></div>
+    </div>
+    <div class="config-grid" style="margin-bottom:28px">
+      <div class="config-item">
+        <div class="config-label">NEA Umbral (pts)</div>
+        <div class="config-value" id="cfg-nea">--</div>
+      </div>
+      <div class="config-item">
+        <div class="config-label">Take Profit</div>
+        <div class="config-value" id="cfg-tp">--</div>
+      </div>
+      <div class="config-item">
+        <div class="config-label">Stop Loss</div>
+        <div class="config-value" id="cfg-sl">--</div>
+      </div>
+      <div class="config-item">
+        <div class="config-label">Monitor Interval</div>
+        <div class="config-value" id="cfg-interval">--</div>
+      </div>
+    </div>
+
+    <!-- Posiciones abiertas + Oportunidades -->
+    <div class="two-col">
+
+      <!-- Posiciones abiertas -->
+      <div>
+        <div class="section-header">
+          <span class="section-title">Posiciones Abiertas</span>
+          <div class="section-line"></div>
+          <span class="section-count" id="open-count">0</span>
+        </div>
+        <div class="scroll-box">
+          <div class="positions-grid" id="open-positions">
+            <div class="empty-state">Sin posiciones abiertas</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Último scan - oportunidades -->
+      <div>
+        <div class="section-header">
+          <span class="section-title">Último Scan — Oportunidades</span>
+          <div class="section-line"></div>
+          <span class="section-count" id="ops-count">0</span>
+        </div>
+        <div class="scroll-box">
+          <table class="ops-table">
+            <thead>
+              <tr>
+                <th>Partido</th>
+                <th>Equipo</th>
+                <th>Precio</th>
+                <th>Valor Real</th>
+                <th>NEA</th>
+                <th>Acción</th>
+              </tr>
+            </thead>
+            <tbody id="ops-tbody">
+              <tr><td colspan="6" class="empty-state">Sin datos del último scan</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Posiciones cerradas -->
+    <div class="section-header">
+      <span class="section-title">Historial Posiciones Cerradas</span>
+      <div class="section-line"></div>
+      <span class="section-count" id="closed-count">0</span>
+    </div>
+    <div class="scroll-box" style="max-height:300px; margin-bottom:40px">
+      <div class="positions-grid" id="closed-positions">
+        <div class="empty-state">Sin posiciones cerradas</div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<div id="notif"></div>
+
+<script>
+let data = {};
+
+function fmt(v, decimals=4) {
+  return (v*100).toFixed(1) + '¢';
+}
+
+function fmtTs(iso) {
+  if (!iso) return '--';
+  try {
+    const d = new Date(iso);
+    return d.toLocaleString('es', {timeZone:'America/New_York', hour12:false, month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit'}) + ' ET';
+  } catch { return iso; }
+}
+
+function renderPosCard(pos) {
+  const statusClass = pos.status === 'OPEN' ? 'open' :
+                      pos.close_reason === 'TAKE_PROFIT' ? 'closed-tp' : 'closed-sl';
+
+  const badgeClass = pos.status === 'OPEN' ? 'open' :
+                     pos.close_reason === 'TAKE_PROFIT' ? 'tp' : 'sl';
+  const badgeLabel = pos.status === 'OPEN' ? 'OPEN' :
+                     pos.close_reason === 'TAKE_PROFIT' ? '✅ TAKE PROFIT' : '🛑 STOP LOSS';
+
+  const pnl = pos.pnl_pct || 0;
+  const pnlClass = pnl > 0 ? 'pos' : pnl < 0 ? 'neg' : 'neu';
+  const pnlSign  = pnl > 0 ? '+' : '';
+
+  // Price bar (SL=0%, Entry=middle, TP=100%)
+  const lo = Math.min(pos.stop_loss, pos.precio_entrada, pos.take_profit) * 0.98;
+  const hi = Math.max(pos.stop_loss, pos.precio_entrada, pos.take_profit) * 1.02;
+  const range = hi - lo || 0.01;
+
+  const pct = v => Math.max(0, Math.min(100, (v - lo) / range * 100));
+  const cur = pos.status === 'OPEN' ? pos.precio_actual : (pos.close_reason === 'TAKE_PROFIT' ? pos.take_profit : pos.stop_loss);
+
+  const priceBarHtml = pos.status === 'OPEN' ? `
+    <div class="price-bar-wrapper">
+      <div class="price-bar-track">
+        <div class="price-bar-sl" style="left:${pct(pos.stop_loss)}%"></div>
+        <div class="price-bar-entry" style="left:${pct(pos.precio_entrada)}%"></div>
+        <div class="price-bar-tp" style="left:${pct(pos.take_profit)}%"></div>
+        <div class="price-bar-current" style="left:${pct(cur)}%"></div>
+      </div>
+    </div>` : '';
+
+  return `
+  <div class="pos-card ${statusClass}">
+    <div class="pos-header">
+      <div>
+        <div class="pos-match">${pos.partido} · ${pos.hora_partido}</div>
+        <div class="pos-team">${pos.equipo}</div>
+      </div>
+      <div>
+        <span class="pos-badge ${badgeClass}">${badgeLabel}</span>
+        <div class="pos-pnl ${pnlClass}" style="margin-top:6px;text-align:right">${pnlSign}${pnl.toFixed(2)}%</div>
+      </div>
+    </div>
+    <div class="pos-prices">
+      <div class="pos-price-item">
+        <div class="pos-price-label">Entrada</div>
+        <div class="pos-price-val entry">${fmt(pos.precio_entrada)}</div>
+      </div>
+      <div class="pos-price-item">
+        <div class="pos-price-label">Actual</div>
+        <div class="pos-price-val current">${fmt(pos.precio_actual)}</div>
+      </div>
+      <div class="pos-price-item">
+        <div class="pos-price-label">Take Profit</div>
+        <div class="pos-price-val tp-val">${fmt(pos.take_profit)}</div>
+      </div>
+      <div class="pos-price-item">
+        <div class="pos-price-label">Stop Loss</div>
+        <div class="pos-price-val sl-val">${fmt(pos.stop_loss)}</div>
+      </div>
+      <div class="pos-price-item">
+        <div class="pos-price-label">Valor Real</div>
+        <div class="pos-price-val" style="color:var(--gold)">${fmt(pos.valor_real)}</div>
+      </div>
+    </div>
+    ${priceBarHtml}
+    <div style="margin-top:8px; font-size:11px; color:var(--dim)">
+      Abierta: ${fmtTs(pos.opened_at)}
+      ${pos.closed_at ? ' · Cerrada: ' + fmtTs(pos.closed_at) : ''}
+    </div>
+  </div>`;
+}
+
+function render(d) {
+  data = d;
+
+  // Clock / last scan
+  document.getElementById('last-scan-label').textContent = 'Last scan: ' + fmtTs(d.last_scan);
+
+  // Stats
+  document.getElementById('stat-open').textContent   = d.stats.total_open;
+  document.getElementById('stat-closed').textContent = d.stats.total_closed;
+  document.getElementById('stat-tp').textContent     = d.stats.take_profits;
+  document.getElementById('stat-sl').textContent     = d.stats.stop_losses;
+  document.getElementById('stat-wr').textContent     = d.stats.win_rate + '%';
+
+  // Config
+  document.getElementById('cfg-nea').textContent      = d.config.nea_umbral + ' pts';
+  document.getElementById('cfg-tp').textContent       = '+' + (d.config.take_profit_delta * 100).toFixed(0) + '¢';
+  document.getElementById('cfg-sl').textContent       = (d.config.stop_loss_delta * 100).toFixed(0) + '¢';
+  document.getElementById('cfg-interval').textContent = (d.config.monitor_interval / 60) + ' min';
+
+  // Open positions
+  const openEl = document.getElementById('open-positions');
+  document.getElementById('open-count').textContent = d.positions_open.length;
+  if (d.positions_open.length === 0) {
+    openEl.innerHTML = '<div class="empty-state">Sin posiciones abiertas</div>';
+  } else {
+    openEl.innerHTML = d.positions_open.map(renderPosCard).join('');
+  }
+
+  // Opportunities
+  const tbody = document.getElementById('ops-tbody');
+  document.getElementById('ops-count').textContent = d.last_scan_ops.length;
+  if (d.last_scan_ops.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Sin datos del último scan</td></tr>';
+  } else {
+    tbody.innerHTML = d.last_scan_ops.map(op => {
+      const isBuy  = op.accion === 'COMPRAR';
+      const neaCls = isBuy ? 'nea-buy' : 'nea-avoid';
+      const actCls = isBuy ? 'action-buy' : 'action-avoid';
+      const actLbl = isBuy ? '🔥 COMPRAR' : '⚠️ EVITAR';
+      return `
+      <tr>
+        <td style="font-size:12px;color:var(--dim)">${op.partido}<br><span style="font-size:11px;color:var(--dim)">${op.hora}</span></td>
+        <td><strong>${op.equipo}</strong></td>
+        <td class="price-mono">${op.p_poly.toFixed(1)}¢</td>
+        <td class="price-mono" style="color:var(--gold)">${op.valor_real.toFixed(1)}¢</td>
+        <td class="${neaCls}">${op.nea > 0 ? '+' : ''}${op.nea.toFixed(1)}</td>
+        <td class="${actCls}">${actLbl}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Closed positions
+  const closedEl = document.getElementById('closed-positions');
+  document.getElementById('closed-count').textContent = d.positions_closed.length;
+  if (d.positions_closed.length === 0) {
+    closedEl.innerHTML = '<div class="empty-state">Sin posiciones cerradas</div>';
+  } else {
+    closedEl.innerHTML = [...d.positions_closed].reverse().map(renderPosCard).join('');
+  }
+}
+
+async function fetchData() {
+  try {
+    const resp = await fetch('/api/data');
+    const d = await resp.json();
+    render(d);
+  } catch (e) {
+    console.error('Error fetching data', e);
+  }
+}
+
+async function triggerScan() {
+  const btn = document.getElementById('scan-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ SCANNING...';
+  try {
+    await fetch('/api/scan', { method: 'POST' });
+    showNotif('✅ Scan manual programado — se ejecutará en el próximo ciclo');
+  } catch {
+    showNotif('❌ Error al programar scan');
+  }
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.textContent = '⚡ SCAN NOW';
+  }, 5000);
+}
+
+function showNotif(msg) {
+  const el = document.getElementById('notif');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 4000);
+}
+
+// Clock ET
+function updateClock() {
+  const et = new Date().toLocaleString('en', {timeZone:'America/New_York', hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
+  document.getElementById('clock').textContent = et + ' ET';
+}
+
+// Init
+fetchData();
+setInterval(fetchData, 60000);  // refresh cada 60s
+updateClock();
+setInterval(updateClock, 1000);
+</script>
+</body>
+</html>
+"""
+
+
+@app.route("/")
+def index():
+    return DASHBOARD_HTML
+
+
+if __name__ == "__main__":
+    # Iniciar scheduler del bot
+    bot.iniciar_scheduler()
+    app.run(host="0.0.0.0", port=PORT)
