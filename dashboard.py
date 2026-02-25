@@ -555,12 +555,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     <!-- Stats -->
     <div class="stats-row">
       <div class="stat-card">
-        <div class="stat-label">Posiciones Abiertas</div>
-        <div class="stat-value" id="stat-open">0</div>
+        <div class="stat-label">Capital Actual</div>
+        <div class="stat-value" id="stat-capital" style="font-size:24px">$100.00</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Total Cerradas</div>
-        <div class="stat-value" id="stat-closed">0</div>
+        <div class="stat-label">PnL Total</div>
+        <div class="stat-value" id="stat-pnl" style="font-size:24px">$0.00</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Posiciones Abiertas</div>
+        <div class="stat-value" id="stat-open">0</div>
       </div>
       <div class="stat-card green">
         <div class="stat-label">Take Profits</div>
@@ -587,16 +591,16 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
         <div class="config-value" id="cfg-nea">--</div>
       </div>
       <div class="config-item">
-        <div class="config-label">Take Profit</div>
+        <div class="config-label">Valor Real Mínimo</div>
+        <div class="config-value" id="cfg-vrmin">--</div>
+      </div>
+      <div class="config-item">
+        <div class="config-label">Take Profit (fijo)</div>
         <div class="config-value" id="cfg-tp">--</div>
       </div>
       <div class="config-item">
-        <div class="config-label">Stop Loss</div>
-        <div class="config-value" id="cfg-sl">--</div>
-      </div>
-      <div class="config-item">
-        <div class="config-label">Monitor Interval</div>
-        <div class="config-value" id="cfg-interval">--</div>
+        <div class="config-label">Monto / Trade</div>
+        <div class="config-value" id="cfg-monto">--</div>
       </div>
     </div>
 
@@ -756,17 +760,22 @@ function render(d) {
   document.getElementById('last-scan-label').textContent = 'Last scan: ' + fmtTs(d.last_scan);
 
   // Stats
-  document.getElementById('stat-open').textContent   = d.stats.total_open;
-  document.getElementById('stat-closed').textContent = d.stats.total_closed;
-  document.getElementById('stat-tp').textContent     = d.stats.take_profits;
-  document.getElementById('stat-sl').textContent     = d.stats.stop_losses;
-  document.getElementById('stat-wr').textContent     = d.stats.win_rate + '%';
+  const pnl = d.stats.pnl_total_usd || 0;
+  const pnlEl = document.getElementById('stat-pnl');
+  pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(4);
+  pnlEl.style.color = pnl > 0 ? 'var(--green)' : pnl < 0 ? 'var(--red)' : 'var(--accent)';
+
+  document.getElementById('stat-capital').textContent = '$' + (d.stats.capital_actual || 100).toFixed(4);
+  document.getElementById('stat-open').textContent    = d.stats.total_open;
+  document.getElementById('stat-tp').textContent      = d.stats.take_profits;
+  document.getElementById('stat-sl').textContent      = d.stats.stop_losses;
+  document.getElementById('stat-wr').textContent      = d.stats.win_rate + '%';
 
   // Config
-  document.getElementById('cfg-nea').textContent      = d.config.nea_umbral + ' pts';
-  document.getElementById('cfg-tp').textContent       = '+' + (d.config.take_profit_delta * 100).toFixed(0) + '¢';
-  document.getElementById('cfg-sl').textContent       = (d.config.stop_loss_delta * 100).toFixed(0) + '¢';
-  document.getElementById('cfg-interval').textContent = (d.config.monitor_interval / 60) + ' min';
+  document.getElementById('cfg-nea').textContent   = d.config.nea_umbral + ' pts';
+  document.getElementById('cfg-vrmin').textContent  = (d.config.valor_real_minimo * 100).toFixed(0) + '¢';
+  document.getElementById('cfg-tp').textContent     = (d.config.take_profit_precio * 100).toFixed(0) + '¢';
+  document.getElementById('cfg-monto').textContent  = '$' + d.config.monto_por_trade_usd + ' (1%)';
 
   // Open positions
   const openEl = document.getElementById('open-positions');
