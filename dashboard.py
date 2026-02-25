@@ -5,6 +5,7 @@ Sirve el frontend y expone endpoints API.
 
 import os
 import json
+import threading
 from datetime import datetime
 from flask import Flask, jsonify, send_file, abort
 import main as bot
@@ -12,19 +13,42 @@ import main as bot
 app = Flask(__name__)
 PORT = int(os.environ.get("PORT", "8080"))
 
+# ── Estado del scan en curso ───────────────────────────────────────────────────
+_scan_running = False
+_scan_lock    = threading.Lock()
+
+
+def _run_scan_background():
+    global _scan_running
+    try:
+        bot.log.info("🖐 Ejecutando scan manual inmediato...")
+        bot.ciclo_scan_y_posiciones()
+    finally:
+        with _scan_lock:
+            _scan_running = False
+
 
 # ── API Endpoints ──────────────────────────────────────────────────────────────
 
 @app.route("/api/data")
 def api_data():
-    return jsonify(bot.get_dashboard_data())
+    data = bot.get_dashboard_data()
+    data["scan_running"] = _scan_running
+    return jsonify(data)
 
 
 @app.route("/api/scan", methods=["POST"])
 def api_scan():
-    """Fuerza un scan manual."""
-    bot.trigger_manual_scan()
-    return jsonify({"ok": True, "message": "Scan manual programado"})
+    """Lanza el scan inmediatamente en un hilo background."""
+    global _scan_running
+    with _scan_lock:
+        if _scan_running:
+            return jsonify({"ok": False, "message": "Ya hay un scan en curso"}), 429
+        _scan_running = True
+
+    t = threading.Thread(target=_run_scan_background, daemon=True)
+    t.start()
+    return jsonify({"ok": True, "message": "Scan iniciado"})
 
 
 @app.route("/api/positions")
@@ -834,15 +858,34 @@ async function triggerScan() {
   btn.disabled = true;
   btn.textContent = '⏳ SCANNING...';
   try {
-    await fetch('/api/scan', { method: 'POST' });
-    showNotif('✅ Scan manual programado — se ejecutará en el próximo ciclo');
+    const resp = await fetch('/api/scan', { method: 'POST' });
+    const data = await resp.json();
+    if (!data.ok) {
+      showNotif('⚠️ ' + data.message);
+      btn.disabled = false;
+      btn.textContent = '⚡ SCAN NOW';
+      return;
+    }
+    showNotif('🔍 Scan iniciado — analizando partidos con Gemini...');
+    // Polling hasta que el scan termine
+    const poll = setInterval(async () => {
+      try {
+        const r = await fetch('/api/data');
+        const d = await r.json();
+        if (!d.scan_running) {
+          clearInterval(poll);
+          render(d);
+          btn.disabled = false;
+          btn.textContent = '⚡ SCAN NOW';
+          showNotif('✅ Scan completado — ' + (d.last_scan_ops.length) + ' oportunidades encontradas');
+        }
+      } catch {}
+    }, 5000);
   } catch {
-    showNotif('❌ Error al programar scan');
-  }
-  setTimeout(() => {
+    showNotif('❌ Error al iniciar scan');
     btn.disabled = false;
     btn.textContent = '⚡ SCAN NOW';
-  }, 5000);
+  }
 }
 
 function showNotif(msg) {
@@ -874,7 +917,8 @@ def index():
     return DASHBOARD_HTML
 
 
+# Iniciar scheduler al cargar el módulo (funciona con Gunicorn y con python directo)
+bot.iniciar_scheduler()
+
 if __name__ == "__main__":
-    # Iniciar scheduler del bot
-    bot.iniciar_scheduler()
-    app.run(host="0.0.0.0", port=PORT)
+    app.run(host="0.0.0.0", port=PORT)v
