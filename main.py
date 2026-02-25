@@ -50,12 +50,15 @@ GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY", "")
 GAMMA_API         = os.environ.get("GAMMA_API", "https://gamma-api.polymarket.com")
 CLOB_API          = os.environ.get("CLOB_API", "https://clob.polymarket.com")
 NBA_SERIES_ID     = int(os.environ.get("NBA_SERIES_ID", "10345"))
-NEA_UMBRAL        = float(os.environ.get("NEA_UMBRAL", "10.0"))          # umbral para abrir posición
-TAKE_PROFIT_DELTA = float(os.environ.get("TAKE_PROFIT_DELTA", "0.02"))   # ej: 0.02 = +2¢ sobre precio entrada
-STOP_LOSS_DELTA   = float(os.environ.get("STOP_LOSS_DELTA", "-0.05"))    # ej: -0.05 = -5¢ bajo precio entrada
-MONITOR_INTERVAL  = int(os.environ.get("MONITOR_INTERVAL", "3600"))      # segundos entre actualizaciones (default 1h)
-GEMINI_MODEL      = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
-DATA_DIR          = os.environ.get("DATA_DIR", "/data")
+NEA_UMBRAL          = float(os.environ.get("NEA_UMBRAL", "10.0"))       # puntos mínimos NEA para señal COMPRAR
+VALOR_REAL_MINIMO   = float(os.environ.get("VALOR_REAL_MINIMO", "0.40")) # filtro: valor real debe ser > 0.40
+TAKE_PROFIT_PRECIO  = float(os.environ.get("TAKE_PROFIT_PRECIO", "0.42"))# precio fijo de salida TP (42¢)
+# Stop Loss = valor real de la posición (calculado al abrir) — no hay delta fijo
+MONITOR_INTERVAL    = int(os.environ.get("MONITOR_INTERVAL", "3600"))    # segundos entre actualizaciones (default 1h)
+CAPITAL_TOTAL       = float(os.environ.get("CAPITAL_TOTAL", "100.0"))    # capital simulado en USD
+RIESGO_POR_TRADE    = float(os.environ.get("RIESGO_POR_TRADE", "0.01"))  # 1% del capital por posición
+GEMINI_MODEL        = os.environ.get("GEMINI_MODEL", "gemini-flash-lite-latest")
+DATA_DIR            = os.environ.get("DATA_DIR", "/data")
 ET = ZoneInfo("America/New_York")
 
 # ── Persistencia ───────────────────────────────────────────────────────────────
@@ -415,8 +418,21 @@ def ejecutar_scan() -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def abrir_posicion(oportunidad: dict) -> dict | None:
-    """Simula apertura de posición si la acción es COMPRAR."""
+    """
+    Simula apertura de posición con las siguientes reglas:
+      - Solo señales COMPRAR
+      - Valor real debe ser > VALOR_REAL_MINIMO (0.40 por defecto)
+      - Tamaño: 1% del capital total (CAPITAL_TOTAL * RIESGO_POR_TRADE)
+      - Take Profit: precio fijo TAKE_PROFIT_PRECIO (0.42 por defecto)
+      - Stop Loss: precio sube hasta valor_real (el mercado te da la razón → salís)
+    """
     if oportunidad["accion"] != "COMPRAR":
+        return None
+
+    # Filtro: valor real mínimo 0.40
+    valor_real_decimal = oportunidad["valor_real"] / 100
+    if valor_real_decimal <= VALOR_REAL_MINIMO:
+        log.info(f"⏭ SKIP {oportunidad['equipo']}: valor real {valor_real_decimal:.2f} ≤ {VALOR_REAL_MINIMO} (muy bajo)")
         return None
 
     positions = load_positions()
@@ -427,39 +443,51 @@ def abrir_posicion(oportunidad: dict) -> dict | None:
             log.info(f"Posición ya abierta para {oportunidad['equipo']}")
             return p
 
+    precio_entrada = oportunidad["p_poly"] / 100
+    monto_usd      = round(CAPITAL_TOTAL * RIESGO_POR_TRADE, 2)  # $1.00
+
     position = {
-        "id":               f"pos_{datetime.now(ET).strftime('%Y%m%d%H%M%S')}_{oportunidad['token_id'][:8]}",
-        "partido":          oportunidad["partido"],
-        "equipo":           oportunidad["equipo"],
-        "token_id":         oportunidad["token_id"],
-        "precio_entrada":   oportunidad["p_poly"] / 100,    # en formato 0-1
-        "precio_actual":    oportunidad["p_poly"] / 100,
-        "valor_real":       oportunidad["valor_real"] / 100,
-        "nea_entrada":      oportunidad["nea"],
-        "take_profit":      round(oportunidad["p_poly"] / 100 + TAKE_PROFIT_DELTA, 4),
-        "stop_loss":        round(oportunidad["p_poly"] / 100 + STOP_LOSS_DELTA, 4),
-        "hora_partido":     oportunidad["hora"],
-        "status":           "OPEN",
-        "opened_at":        datetime.now(ET).isoformat(),
-        "closed_at":        None,
-        "close_reason":     None,
-        "pnl_pct":          0.0,
-        "price_history":    [
-            {
-                "ts":    datetime.now(ET).isoformat(),
-                "price": oportunidad["p_poly"] / 100,
-            }
+        "id":             f"pos_{datetime.now(ET).strftime('%Y%m%d%H%M%S')}_{oportunidad['token_id'][:8]}",
+        "partido":        oportunidad["partido"],
+        "equipo":         oportunidad["equipo"],
+        "token_id":       oportunidad["token_id"],
+        "precio_entrada": round(precio_entrada, 4),
+        "precio_actual":  round(precio_entrada, 4),
+        "valor_real":     round(valor_real_decimal, 4),
+        "nea_entrada":    oportunidad["nea"],
+        "take_profit":    round(TAKE_PROFIT_PRECIO, 4),         # TP fijo: 0.42
+        "stop_loss":      round(precio_entrada * 0.50, 4),    # SL = 50% del precio de entrada
+        "monto_usd":      monto_usd,                          # $1.00 (1% de $100)
+        "hora_partido":   oportunidad["hora"],
+        "status":         "OPEN",
+        "opened_at":      datetime.now(ET).isoformat(),
+        "closed_at":      None,
+        "close_reason":   None,
+        "pnl_usd":        0.0,
+        "pnl_pct":        0.0,
+        "price_history":  [
+            {"ts": datetime.now(ET).isoformat(), "price": precio_entrada}
         ],
     }
 
     positions.append(position)
     save_positions(positions)
-    log.info(f"✅ POSICIÓN ABIERTA: {position['equipo']} @ {position['precio_entrada']:.4f} | TP: {position['take_profit']:.4f} | SL: {position['stop_loss']:.4f}")
+    log.info(
+        f"✅ POSICIÓN ABIERTA: {position['equipo']} | "
+        f"Entrada: {precio_entrada:.2%} | "
+        f"TP: {TAKE_PROFIT_PRECIO:.2%} | "
+        f"SL (valor real): {valor_real_decimal:.2%} | "
+        f"Monto: ${monto_usd}"
+    )
     return position
 
 
 def actualizar_posiciones():
-    """Actualiza precios de posiciones abiertas y ejecuta TP/SL."""
+    """
+    Actualiza precios de posiciones abiertas y ejecuta:
+      - Take Profit: precio_actual >= 0.42 (TAKE_PROFIT_PRECIO)
+      - Stop Loss:   precio_actual >= valor_real (el mercado reconoció el valor → salís)
+    """
     positions = load_positions()
     abiertas = [p for p in positions if p["status"] == "OPEN"]
 
@@ -481,31 +509,44 @@ def actualizar_posiciones():
             continue
 
         pos["precio_actual"] = round(precio_actual, 4)
-        pos["pnl_pct"] = round((precio_actual - pos["precio_entrada"]) / pos["precio_entrada"] * 100, 2)
 
-        # Agregar al historial de precios
+        # PnL en % y en USD
+        pnl_pct = (precio_actual - pos["precio_entrada"]) / pos["precio_entrada"] * 100
+        pnl_usd = pos.get("monto_usd", 1.0) * (precio_actual - pos["precio_entrada"]) / pos["precio_entrada"]
+        pos["pnl_pct"] = round(pnl_pct, 2)
+        pos["pnl_usd"] = round(pnl_usd, 4)
+
+        # Historial de precios (máx 48 puntos)
         pos.setdefault("price_history", []).append({
             "ts":    datetime.now(ET).isoformat(),
             "price": precio_actual,
         })
-        # Guardar máximo 48 puntos de historial
         pos["price_history"] = pos["price_history"][-48:]
 
         modificado = True
 
-        # Verificar Take Profit
+        # ── Take Profit: precio sube hasta 0.42 ──────────────────────────────
         if precio_actual >= pos["take_profit"]:
             pos["status"]       = "CLOSED"
             pos["closed_at"]    = datetime.now(ET).isoformat()
             pos["close_reason"] = "TAKE_PROFIT"
-            log.info(f"🎯 TAKE PROFIT: {pos['equipo']} | Entrada: {pos['precio_entrada']:.4f} → Salida: {precio_actual:.4f} | PnL: {pos['pnl_pct']:+.2f}%")
+            log.info(
+                f"🎯 TAKE PROFIT: {pos['equipo']} | "
+                f"{pos['precio_entrada']:.2%} → {precio_actual:.2%} | "
+                f"PnL: {pos['pnl_pct']:+.2f}% (${pos['pnl_usd']:+.4f})"
+            )
 
-        # Verificar Stop Loss
-        elif precio_actual <= pos["stop_loss"]:
+        # ── Stop Loss: precio sube hasta valor_real ──────────────────────────
+        # (el mercado reconoció el valor real → la ineficiencia desapareció)
+        elif precio_actual >= pos["stop_loss"] and precio_actual < pos["take_profit"]:
             pos["status"]       = "CLOSED"
             pos["closed_at"]    = datetime.now(ET).isoformat()
             pos["close_reason"] = "STOP_LOSS"
-            log.info(f"🛑 STOP LOSS: {pos['equipo']} | Entrada: {pos['precio_entrada']:.4f} → Salida: {precio_actual:.4f} | PnL: {pos['pnl_pct']:+.2f}%")
+            log.info(
+                f"🛑 STOP LOSS (valor real alcanzado): {pos['equipo']} | "
+                f"{pos['precio_entrada']:.2%} → {precio_actual:.2%} | "
+                f"PnL: {pos['pnl_pct']:+.2f}% (${pos['pnl_usd']:+.4f})"
+            )
 
     if modificado:
         save_positions(positions)
@@ -590,31 +631,40 @@ def get_dashboard_data() -> dict:
     abiertas = [p for p in positions if p["status"] == "OPEN"]
     cerradas  = [p for p in positions if p["status"] == "CLOSED"]
 
-    tp_count = sum(1 for p in cerradas if p.get("close_reason") == "TAKE_PROFIT")
-    sl_count = sum(1 for p in cerradas if p.get("close_reason") == "STOP_LOSS")
+    tp_count  = sum(1 for p in cerradas if p.get("close_reason") == "TAKE_PROFIT")
+    sl_count  = sum(1 for p in cerradas if p.get("close_reason") == "STOP_LOSS")
+
+    # PnL total en USD
+    pnl_total_usd = sum(p.get("pnl_usd", 0) for p in cerradas)
+    capital_actual = round(CAPITAL_TOTAL + pnl_total_usd, 4)
 
     last_scan_ops = []
     if scan_log:
         last_scan_ops = scan_log[-1].get("resultados", [])
 
     return {
-        "ts":            datetime.now(ET).isoformat(),
-        "last_scan":     state.get("last_scan"),
-        "positions_open": abiertas,
-        "positions_closed": cerradas[-20:],  # últimas 20 cerradas
+        "ts":               datetime.now(ET).isoformat(),
+        "last_scan":        state.get("last_scan"),
+        "positions_open":   abiertas,
+        "positions_closed": cerradas[-20:],
         "stats": {
-            "total_open":  len(abiertas),
-            "total_closed": len(cerradas),
-            "take_profits": tp_count,
-            "stop_losses":  sl_count,
-            "win_rate":    round(tp_count / max(len(cerradas), 1) * 100, 1),
+            "total_open":    len(abiertas),
+            "total_closed":  len(cerradas),
+            "take_profits":  tp_count,
+            "stop_losses":   sl_count,
+            "win_rate":      round(tp_count / max(len(cerradas), 1) * 100, 1),
+            "pnl_total_usd": round(pnl_total_usd, 4),
+            "capital_actual": capital_actual,
         },
         "last_scan_ops": last_scan_ops,
         "config": {
-            "nea_umbral":        NEA_UMBRAL,
-            "take_profit_delta": TAKE_PROFIT_DELTA,
-            "stop_loss_delta":   STOP_LOSS_DELTA,
-            "monitor_interval":  MONITOR_INTERVAL,
+            "nea_umbral":          NEA_UMBRAL,
+            "valor_real_minimo":   VALOR_REAL_MINIMO,
+            "take_profit_precio":  TAKE_PROFIT_PRECIO,
+            "monitor_interval":    MONITOR_INTERVAL,
+            "capital_total":       CAPITAL_TOTAL,
+            "riesgo_por_trade":    RIESGO_POR_TRADE,
+            "monto_por_trade_usd": round(CAPITAL_TOTAL * RIESGO_POR_TRADE, 2),
         },
     }
 
