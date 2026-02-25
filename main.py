@@ -476,7 +476,7 @@ def abrir_posicion(oportunidad: dict) -> dict | None:
         f"✅ POSICIÓN ABIERTA: {position['equipo']} | "
         f"Entrada: {precio_entrada:.2%} | "
         f"TP: {TAKE_PROFIT_PRECIO:.2%} | "
-        f"SL (valor real): {valor_real_decimal:.2%} | "
+        f"SL (−50%): {precio_entrada * 0.50:.2%} | "
         f"Monto: ${monto_usd}"
     )
     return position
@@ -536,14 +536,13 @@ def actualizar_posiciones():
                 f"PnL: {pos['pnl_pct']:+.2f}% (${pos['pnl_usd']:+.4f})"
             )
 
-        # ── Stop Loss: precio sube hasta valor_real ──────────────────────────
-        # (el mercado reconoció el valor real → la ineficiencia desapareció)
-        elif precio_actual >= pos["stop_loss"] and precio_actual < pos["take_profit"]:
+        # ── Stop Loss: precio cae al 50% del precio de entrada ──────────────
+        elif precio_actual <= pos["stop_loss"]:
             pos["status"]       = "CLOSED"
             pos["closed_at"]    = datetime.now(ET).isoformat()
             pos["close_reason"] = "STOP_LOSS"
             log.info(
-                f"🛑 STOP LOSS (valor real alcanzado): {pos['equipo']} | "
+                f"🛑 STOP LOSS (−50% entrada): {pos['equipo']} | "
                 f"{pos['precio_entrada']:.2%} → {precio_actual:.2%} | "
                 f"PnL: {pos['pnl_pct']:+.2f}% (${pos['pnl_usd']:+.4f})"
             )
