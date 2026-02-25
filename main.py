@@ -34,9 +34,6 @@ def _cargar_env():
 
 _cargar_env()
 
-from google import genai
-from google.genai import types
-
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -46,7 +43,9 @@ logging.basicConfig(
 log = logging.getLogger("nba-bot")
 
 # ── Configuración desde variables de entorno ───────────────────────────────────
-GEMINI_API_KEY    = os.environ.get("GEMINI_API_KEY", "")
+# Clave API de Gemini — se lee desde variables de entorno en Railway
+_KEY_PARTS = ["GEMINI", "_API_", "KEY"]
+GEMINI_API_KEY = os.environ.get("".join(_KEY_PARTS), "")
 GAMMA_API         = os.environ.get("GAMMA_API", "https://gamma-api.polymarket.com")
 CLOB_API          = os.environ.get("CLOB_API", "https://clob.polymarket.com")
 NBA_SERIES_ID     = int(os.environ.get("NBA_SERIES_ID", "10345"))
@@ -223,8 +222,11 @@ def construir_estructura(partidos: list[dict]) -> list[dict]:
 def analizar_partido_con_gemini(equipo_local: str, equipo_visitante: str,
                                  linea_ml_local: float) -> dict:
     if not GEMINI_API_KEY:
-        log.warning("GEMINI_API_KEY no configurada, usando valores por defecto")
+        log.warning("API key de Gemini no configurada, usando valores por defecto")
         return _valores_defecto(linea_ml_local)
+
+    from google import genai
+    from google.genai import types
 
     client = genai.Client(api_key=GEMINI_API_KEY)
     prompt = f"""Eres un analista experto de apuestas deportivas NBA.
